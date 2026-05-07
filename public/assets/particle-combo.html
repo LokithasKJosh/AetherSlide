@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>粒子动态避让与回正效果</title>
+    <style>
+        body {
+            margin: 0;
+            background: #111; /* 深色背景 */
+            overflow: hidden;
+            font-family: sans-serif;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        .tip {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 14px;
+            pointer-events: none; /* 防止提示文字阻挡鼠标事件 */
+        }
+    </style>
+</head>
+<body>
+    <div class="tip">将鼠标移入字母区域查看打散效果</div>
+    <canvas id="particleCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('particleCanvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        
+        let particleArray = [];
+        
+        // 鼠标交互对象
+        let mouse = {
+            x: null,
+            y: null,
+            radius: 80 // 鼠标排斥的范围半径
+        };
+
+        window.addEventListener('mousemove', function(event) {
+            mouse.x = event.x;
+            mouse.y = event.y;
+        });
+
+        // 鼠标离开窗口时，解除排斥力
+        window.addEventListener('mouseleave', function() {
+            mouse.x = null;
+            mouse.y = null;
+        });
+
+        // 处理屏幕尺寸缩放
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            init(); // 尺寸改变时重新生成图案
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        // 粒子物理类
+        class Particle {
+            constructor(x, y) {
+                // 初始位置设在屏幕外或随机位置，呈现飞入效果
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height;
+                // 记录粒子的目标位置（原始位置）
+                this.baseX = x;
+                this.baseY = y;
+                // 粒子的尺寸
+                this.size = 2;
+                // 物理属性：速度、摩擦力、回弹系数
+                this.vx = 0;
+                this.vy = 0;
+                this.friction = 0.7; // 摩擦力（0-1，越小越容易停下）
+                this.ease = 0.01;     // 回正弹性系数（越大回弹越快）
+                this.density = (Math.random() * 20) + 5; // 粒子质量（影响被排斥的力度）
+            }
+
+            draw() {
+                ctx.fillStyle = '#7E2BF7'; // 默认给了个类似 Vue 的主题绿
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            update() {
+                // 1. 计算与鼠标的距离
+                let dx = mouse.x - this.x;
+                let dy = mouse.y - this.y;
+                let distance = Math.sqrt(dx * dx + dy * dy);
+
+                // 2. 如果在鼠标半径内，产生排斥力
+                if (distance < mouse.radius) {
+                    let forceDirectionX = dx / distance;
+                    let forceDirectionY = dy / distance;
+                    // 距离鼠标越近，排斥力越强
+                    let force = (mouse.radius - distance) / mouse.radius;
+                    // 根据粒子质量计算最终被推开的方向和力度
+                    let directionX = forceDirectionX * force * this.density;
+                    let directionY = forceDirectionY * force * this.density;
+
+                    this.vx -= directionX;
+                    this.vy -= directionY;
+                }
+
+                // 3. 计算回弹原始位置的拉力 (弹簧物理)
+                this.vx += (this.baseX - this.x) * this.ease;
+                this.vy += (this.baseY - this.y) * this.ease;
+
+                // 4. 应用摩擦力并更新最终位置
+                this.vx *= this.friction;
+                this.vy *= this.friction;
+                this.x += this.vx;
+                this.y += this.vy;
+            }
+        }
+
+        // 初始化：将文字转换为粒子数据
+        function init() {
+            particleArray = [];
+            // 先清空画布
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // 在画布上临时绘制文字
+            const text = '壹珈智晟';
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 20vw sans-serif'; // 字体大小跟随屏幕宽度
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+            // 获取整个画布的像素数据
+            const textCoordinates = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            
+            // 扫描像素数据（为了性能，设置步长跳跃扫描）
+            const step = 7; // 步长越小，粒子越密集，性能消耗越大
+            for (let y = 0; y < textCoordinates.height; y += step) {
+                for (let x = 0; x < textCoordinates.width; x += step) {
+                    // 计算像素在数组中的索引
+                    const index = (y * textCoordinates.width + x) * 4;
+                    // 检查 alpha 通道（透明度），如果像素不透明，则在此处生成一个粒子
+                    if (textCoordinates.data[index + 3] > 128) {
+                        particleArray.push(new Particle(x, y));
+                    }
+                }
+            }
+        }
+
+        // 动画主循环
+        function animate() {
+            // 清空画布（这里没有用半透明拖影，是为了让避让效果看起来更干净利落）
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            for (let i = 0; i < particleArray.length; i++) {
+                particleArray[i].update();
+                particleArray[i].draw();
+            }
+            requestAnimationFrame(animate);
+        }
+
+        // 启动！
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        init();
+        animate();
+    </script>
+</body>
+</html>
